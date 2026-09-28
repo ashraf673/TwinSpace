@@ -4,6 +4,7 @@ import android.app.Activity
 import android.app.PendingIntent
 import android.content.Intent
 import android.content.pm.PackageInstaller
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -51,22 +52,29 @@ class CloneInstallActivity : Activity() {
         thread {
             val dpm = Admin.dpm(this)
             val admin = Admin.component(this)
-            val existing = try {
-                if (Build.VERSION.SDK_INT >= 28) dpm.installExistingPackage(admin, pkg) else false
-            } catch (_: Exception) {
-                false
+
+            if (Build.VERSION.SDK_INT >= 28) {
+                try {
+                    dpm.installExistingPackage(admin, pkg)
+                } catch (_: Exception) {
+                    // Fall through to other methods.
+                }
             }
-            if (existing) {
+            if (isInstalled(pkg)) {
                 runOnUiThread { finish() }
                 return@thread
             }
+
             try {
                 dpm.enableSystemApp(admin, pkg)
+            } catch (_: Exception) {
+                // Not a system app.
+            }
+            if (isInstalled(pkg)) {
                 runOnUiThread { finish() }
                 return@thread
-            } catch (_: Exception) {
-                // Not a system app, or already handled.
             }
+
             val uris = urisFrom(intent)
             if (uris.isEmpty()) {
                 runOnUiThread { finish() }
@@ -77,6 +85,15 @@ class CloneInstallActivity : Activity() {
             } catch (_: Exception) {
                 runOnUiThread { finish() }
             }
+        }
+    }
+
+    private fun isInstalled(packageName: String): Boolean {
+        return try {
+            packageManager.getPackageInfo(packageName, 0)
+            true
+        } catch (_: PackageManager.NameNotFoundException) {
+            false
         }
     }
 

@@ -42,10 +42,12 @@ object WorkApps {
     }
 
     fun clones(context: Context): List<ClonedApp> {
+        val wanted = CloneLedger.packages(context)
+        if (wanted.isEmpty()) return emptyList()
         val work = Admin.workProfile(context) ?: return emptyList()
         val launcher = context.getSystemService(LauncherApps::class.java)
         return launcher.getActivityList(null, work)
-            .filter { it.applicationInfo.packageName != context.packageName }
+            .filter { it.applicationInfo.packageName in wanted }
             .map { info ->
                 ClonedApp(
                     packageName = info.applicationInfo.packageName,

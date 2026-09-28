@@ -76,6 +76,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.twinspace.app.Admin
 import com.twinspace.app.CloneEngine
+import com.twinspace.app.CloneLedger
 import com.twinspace.app.ClonedApp
 import com.twinspace.app.InstalledApp
 import com.twinspace.app.WorkApps
@@ -134,6 +135,9 @@ fun TwinApp() {
                 Admin.component(context)
             )
             putExtra(DevicePolicyManager.EXTRA_PROVISIONING_SKIP_ENCRYPTION, true)
+            if (Build.VERSION.SDK_INT >= 33) {
+                putExtra(DevicePolicyManager.EXTRA_PROVISIONING_SKIP_EDUCATION_SCREENS, true)
+            }
         }
         provision.launch(intent)
     }
@@ -149,6 +153,7 @@ fun TwinApp() {
     fun cloneSelected() {
         val pkg = selected ?: return
         val label = CloneEngine.appLabel(context, pkg)
+        CloneLedger.add(context, pkg)
         screen = Screen.Home
         status = "Preparing a fresh copy of $label…"
         error = null
@@ -210,6 +215,7 @@ fun TwinApp() {
                 },
                 onRemove = { app ->
                     try {
+                        CloneLedger.remove(context, app.packageName)
                         CloneEngine.requestUninstall(context, app.packageName)
                         status = "Removing ${app.label}…"
                         scope.launch {

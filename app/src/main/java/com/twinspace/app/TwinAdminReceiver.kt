@@ -19,6 +19,12 @@ class TwinAdminReceiver : DeviceAdminReceiver() {
     }
 
     companion object {
+        private val HELPERS = listOf(
+            "com.android.vending",
+            "com.google.android.gms",
+            "com.google.android.gsf"
+        )
+
         fun enableProfile(context: Context) {
             val dpm = Admin.dpm(context)
             val admin = Admin.component(context)
@@ -31,6 +37,9 @@ class TwinAdminReceiver : DeviceAdminReceiver() {
                 // Already enabled.
             }
 
+            dpm.clearCrossProfileIntentFilters(admin)
+            val flags = DevicePolicyManager.FLAG_PARENT_CAN_ACCESS_MANAGED or
+                DevicePolicyManager.FLAG_MANAGED_CAN_ACCESS_PARENT
             listOf(
                 CloneInstallActivity.ACTION_CLONE,
                 CloneInstallActivity.ACTION_UNINSTALL,
@@ -39,12 +48,25 @@ class TwinAdminReceiver : DeviceAdminReceiver() {
                 dpm.addCrossProfileIntentFilter(
                     admin,
                     IntentFilter(action).apply { addCategory(Intent.CATEGORY_DEFAULT) },
-                    DevicePolicyManager.FLAG_MANAGED_CAN_ACCESS_PARENT
+                    flags
                 )
             }
 
             if (Build.VERSION.SDK_INT >= 30) {
                 dpm.setCrossProfilePackages(admin, setOf(context.packageName))
+            }
+
+            HELPERS.forEach { pkg ->
+                if (Build.VERSION.SDK_INT >= 28) {
+                    try {
+                        dpm.installExistingPackage(admin, pkg)
+                    } catch (_: Exception) {
+                    }
+                }
+                try {
+                    dpm.enableSystemApp(admin, pkg)
+                } catch (_: Exception) {
+                }
             }
 
             val pm = context.packageManager

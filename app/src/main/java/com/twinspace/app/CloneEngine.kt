@@ -4,12 +4,12 @@ import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.CrossProfileApps
 import android.content.pm.PackageManager
 import android.net.Uri
-import android.os.Build
 import androidx.core.content.FileProvider
 import java.io.File
 
@@ -72,6 +72,7 @@ object CloneEngine {
     }
 
     fun requestWipe(context: Context) {
+        CloneLedger.clear(context)
         val intent = Intent(CloneInstallActivity.ACTION_WIPE_SPACE).apply {
             setClassName(context.packageName, CloneInstallActivity::class.java.name)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -81,24 +82,39 @@ object CloneEngine {
 
     fun startInWorkProfile(context: Context, intent: Intent) {
         val work = Admin.workProfile(context)
-        if (Build.VERSION.SDK_INT >= 30 && work != null) {
-            val cpa = context.getSystemService(CrossProfileApps::class.java)
-            if (cpa.canInteractAcrossProfiles()) {
-                if (context is Activity) {
-                    cpa.startActivity(intent, work, context)
-                    return
-                }
-                context.createContextAsUser(work, 0).startActivity(intent)
+            ?: throw IllegalStateException("Create second space first.")
+        val activity = context.findActivity()
+        val cpa = context.getSystemService(CrossProfileApps::class.java)
+        if (activity != null) {
+            try {
+                cpa.startActivity(intent, work, activity)
                 return
+            } catch (_: SecurityException) {
+                // Connected-apps permission not granted yet — try the intent-filter path.
+            } catch (_: Exception) {
+                // Fall through.
             }
         }
+        val implicit = Intent(intent).apply {
+            component = null
+            setPackage(context.packageName)
+        }
         try {
-            context.startActivity(intent)
+            context.startActivity(implicit)
         } catch (_: ActivityNotFoundException) {
             throw IllegalStateException(
-                "Couldn't reach Second Space. Allow connected work apps, then try again."
+                "Couldn't reach Second Space. Tap “Open connected apps” and allow TwinSpace, then try again."
             )
         }
+    }
+
+    private fun Context.findActivity(): Activity? {
+        var ctx: Context? = this
+        while (ctx is ContextWrapper) {
+            if (ctx is Activity) return ctx
+            ctx = ctx.baseContext
+        }
+        return null
     }
 
     fun appLabel(context: Context, packageName: String): String {
