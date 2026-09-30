@@ -202,29 +202,36 @@ object GuestLoader {
                 InMemoryDexClassLoader(buffers.toTypedArray(), libPath, parent)
             Build.VERSION.SDK_INT >= 27 ->
                 InMemoryDexClassLoader(buffers.toTypedArray(), parent)
-            else -> buffers.fold(parent) { acc, buf -> InMemoryDexClassLoader(buf, acc) }
+            else -> buffers.fold<ClassLoader>(parent) { acc, buf ->
+                InMemoryDexClassLoader(buf, acc)
+            }
         }
     }
 
     private fun dexBuffers(apk: File): List<ByteBuffer> {
         if (!apk.exists()) return emptyList()
-        return try {
+        val buffers = ArrayList<ByteBuffer>()
+        try {
             ZipFile(apk).use { zip ->
-                zip.entries().asSequence()
-                    .filter { !it.isDirectory && it.name.matches(Regex("^classes\\d*\\.dex$")) }
-                    .sortedBy { it.name }
-                    .mapNotNull { entry ->
-                        val bytes = zip.getInputStream(entry).use { it.readBytes() }
-                        if (bytes.size < 8) return@mapNotNull null
-                        ByteBuffer.allocateDirect(bytes.size).apply {
-                            put(bytes)
-                            flip()
-                        }
-                    }
+                val names = zip.entries().asSequence()
+                    .map { it.name }
+                    .filter { it.matches(Regex("^classes\\d*\\.dex$")) }
+                    .sorted()
+                    .toList()
+                for (name in names) {
+                    val entry = zip.getEntry(name) ?: continue
+                    val bytes = zip.getInputStream(entry).use { input -> input.readBytes() }
+                    if (bytes.size < 8) continue
+                    val buf = ByteBuffer.allocateDirect(bytes.size)
+                    buf.put(bytes)
+                    buf.flip()
+                    buffers.add(buf)
+                }
             }
         } catch (_: Throwable) {
-            emptyList()
+            return emptyList()
         }
+        return buffers
     }
 
     fun resourcesFor(host: Context, apkFiles: List<File>): Resources {
