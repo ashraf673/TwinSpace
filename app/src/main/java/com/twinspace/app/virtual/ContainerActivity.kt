@@ -39,9 +39,9 @@ open class ContainerActivity : Activity() {
         val isolatedCtx = IsolatedContext(
             host = this,
             guestPackage = loadedPkg.packageName,
-            appInfo = loadedPkg.appInfo,
-            resources = loadedPkg.resources,
-            loader = loadedPkg.classLoader,
+            guestAppInfo = loadedPkg.appInfo,
+            guestResources = loadedPkg.resources,
+            guestLoader = loadedPkg.classLoader,
             dataRoot = loadedPkg.dataRoot
         )
         loaded = loadedPkg

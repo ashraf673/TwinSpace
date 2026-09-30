@@ -17,9 +17,9 @@ import java.io.FileOutputStream
 class IsolatedContext(
     private val host: Context,
     private val guestPackage: String,
-    private val appInfo: ApplicationInfo,
-    private val resources: Resources,
-    private val loader: ClassLoader,
+    private val guestAppInfo: ApplicationInfo,
+    private val guestResources: Resources,
+    private val guestLoader: ClassLoader,
     private val dataRoot: File
 ) : ContextWrapper(host) {
 
@@ -28,20 +28,20 @@ class IsolatedContext(
     private val databases = File(dataRoot, "databases").apply { mkdirs() }
     private val noBackup = File(dataRoot, "no_backup").apply { mkdirs() }
     private val prefsDir = File(dataRoot, "shared_prefs").apply { mkdirs() }
-    private val theme: Resources.Theme by lazy {
-        resources.newTheme().apply {
-            val resId = if (appInfo.theme != 0) appInfo.theme else android.R.style.Theme_DeviceDefault_NoActionBar
+    private val guestTheme: Resources.Theme by lazy {
+        guestResources.newTheme().apply {
+            val resId = if (guestAppInfo.theme != 0) guestAppInfo.theme else android.R.style.Theme_DeviceDefault_NoActionBar
             applyStyle(resId, true)
         }
     }
 
     override fun getPackageName(): String = guestPackage
     override fun getOpPackageName(): String = guestPackage
-    override fun getApplicationInfo(): ApplicationInfo = appInfo
-    override fun getClassLoader(): ClassLoader = loader
-    override fun getResources(): Resources = resources
-    override fun getAssets(): AssetManager = resources.assets
-    override fun getTheme(): Resources.Theme = theme
+    override fun getApplicationInfo(): ApplicationInfo = guestAppInfo
+    override fun getClassLoader(): ClassLoader = guestLoader
+    override fun getResources(): Resources = guestResources
+    override fun getAssets(): AssetManager = guestResources.assets
+    override fun getTheme(): Resources.Theme = guestTheme
 
     override fun getDataDir(): File = dataRoot
     override fun getFilesDir(): File = files
@@ -121,8 +121,8 @@ class IsolatedContext(
 
     override fun getObbDirs(): Array<File> = arrayOf(getObbDir())
 
-    override fun getPackageCodePath(): String = appInfo.sourceDir ?: super.getPackageCodePath()
-    override fun getPackageResourcePath(): String = appInfo.sourceDir ?: super.getPackageResourcePath()
+    override fun getPackageCodePath(): String = guestAppInfo.sourceDir ?: super.getPackageCodePath()
+    override fun getPackageResourcePath(): String = guestAppInfo.sourceDir ?: super.getPackageResourcePath()
 
     override fun getApplicationContext(): Context = this
 
@@ -134,9 +134,9 @@ class IsolatedContext(
         return IsolatedContext(
             host.createConfigurationContext(overrideConfiguration),
             guestPackage,
-            appInfo,
-            resources,
-            loader,
+            guestAppInfo,
+            guestResources,
+            guestLoader,
             dataRoot
         )
     }
