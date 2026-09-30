@@ -2,23 +2,30 @@
 
 A **second space** for Android. Clone a game you already have — Hill Climb Racing, for example — so someone else can play a **fresh copy** on the same phone. Your original install and saves are not touched.
 
-This uses Android’s **work profile** (the same OS feature Island and Shelter use). The clone is the real APK, with its own data directory. It is not Parallel Space virtualization and it is not a WebView.
+Clones run in TwinSpace’s **application container** (isolated process + data directory). There is **no work profile**, so this works on phones that already have Samsung Knox / work email / Island.
 
 ## On the phone
 
-1. Open TwinSpace → **Create second space**. Accept Android’s work-profile screens (one-time).
-2. On Android 11+, if TwinSpace asks, tap **Open connected apps** and allow it.
-3. Tap **+**, pick the game (Hill Climb Racing), tap **Done**.
-4. Wait a few seconds. If Android shows an install prompt, tap Install.
-5. The game appears in TwinSpace. Open it — it starts like a brand-new install.
+1. Open TwinSpace.
+2. Tap **+**, pick the game, tap **Done**.
+3. Wait a few seconds while TwinSpace copies the APK into the container.
+4. The game appears. Open it — empty save, original untouched.
 
-Long-press a clone to remove it (only the copy). Settings can wipe the whole second space. Your main apps stay.
+Long-press a clone to remove it. Settings can wipe every clone. Your main apps stay.
 
-## Limits
+## How it works
 
-- One second space per phone. If a work profile already exists (company email, Island, Shelter), remove it first.
-- Some games with Play Integrity / anti-cheat refuse a work profile. Casual games like Hill Climb Racing usually work.
-- Not a Play Store listing as-is (device-admin + QUERY_ALL_PACKAGES). Sideload the Codemagic APK.
+TwinSpace hosts selected installed APKs inside its own virtual runtime:
+
+- Copies the installed APK (and split APKs) into TwinSpace private storage
+- Extracts native libraries
+- Starts the app in a dedicated TwinSpace process (`:c1` … `:c8`)
+- Redirects files, databases, and SharedPreferences to a per-clone data folder
+- Keeps same-package activity starts inside the container so the original icon is never opened
+
+The original app keeps its own UID and `/data/data/<package>` directory. TwinSpace cannot write there, so the original save stays safe.
+
+This is not OS-level virtualization (Parallel Space / VirtualApp) and not a work profile. Heavy games with anti-cheat or Play Integrity may refuse the container. Casual games like Hill Climb Racing are the target.
 
 ## Codemagic (Stage 1)
 
@@ -26,6 +33,4 @@ Long-press a clone to remove it (only the copy). Settings can wipe the whole sec
 2. Run workflow **TwinSpace - Stage 1 Android APK**.
 3. Download the debug APK from artifacts.
 
-Same Gradle + Java 17 setup as Let's Backup. Codemagic installs Gradle 8.11.1 and runs `assembleDebug`. No signing key for Stage 1.
-
-Package: `com.twinspace.app` · minSdk 26 · targetSdk 35 · version 2.1
+Package: `com.twinspace.app` · minSdk 26 · targetSdk 35 · version 3.0

@@ -10,11 +10,6 @@ import com.twinspace.app.ui.TwinTheme
 class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        if (Admin.isProfileOwner(this)) {
-            TwinAdminReceiver.enableProfile(this)
-            finish()
-            return
-        }
         enableEdgeToEdge()
         setContent {
             TwinTheme {

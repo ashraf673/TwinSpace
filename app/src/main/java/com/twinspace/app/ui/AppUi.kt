@@ -1,17 +1,13 @@
 package com.twinspace.app.ui
 
 import android.app.Activity
-import android.app.admin.DevicePolicyManager
-import android.content.Intent
-import android.content.pm.CrossProfileApps
+import android.content.Context
+import android.content.ContextWrapper
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
-import android.os.Build
 import android.widget.Toast
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -52,7 +48,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -65,118 +60,48 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
-import com.twinspace.app.Admin
-import com.twinspace.app.CloneEngine
-import com.twinspace.app.CloneLedger
-import com.twinspace.app.ClonedApp
 import com.twinspace.app.InstalledApp
-import com.twinspace.app.WorkApps
+import com.twinspace.app.virtual.VirtualCore
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-private enum class Screen { Setup, Home, Picker, Settings }
+private enum class Screen { Home, Picker, Settings }
 
 @Composable
 fun TwinApp() {
     val context = LocalContext.current
-    var screen by remember { mutableStateOf(if (Admin.hasWorkProfile(context)) Screen.Home else Screen.Setup) }
-    var clones by remember { mutableStateOf(emptyList<ClonedApp>()) }
+    var screen by remember { mutableStateOf(Screen.Home) }
+    var clones by remember { mutableStateOf(VirtualCore.clones(context)) }
     var status by remember { mutableStateOf<String?>(null) }
     var selected by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
     fun refresh() {
-        clones = if (Admin.hasWorkProfile(context)) WorkApps.clones(context) else emptyList()
-        if (Admin.hasWorkProfile(context) && screen == Screen.Setup) screen = Screen.Home
-    }
-
-    val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) refresh()
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-    }
-
-    val provision = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-        refresh()
-        if (Admin.hasWorkProfile(context)) screen = Screen.Home
-        else if (it.resultCode != Activity.RESULT_OK) {
-            error = "Setup was cancelled. Android needs a work profile to keep the second copy separate."
-        }
-    }
-
-    fun createSpace() {
-        error = null
-        if (Admin.hasWorkProfile(context)) {
-            screen = Screen.Home
-            return
-        }
-        if (!Admin.canProvision(context)) {
-            error = "This phone already has a work profile (work email, Island, Shelter, or a company policy). Remove that profile in Android Settings first."
-            return
-        }
-        val intent = Intent(DevicePolicyManager.ACTION_PROVISION_MANAGED_PROFILE).apply {
-            putExtra(
-                DevicePolicyManager.EXTRA_PROVISIONING_DEVICE_ADMIN_COMPONENT_NAME,
-                Admin.component(context)
-            )
-            putExtra(DevicePolicyManager.EXTRA_PROVISIONING_SKIP_ENCRYPTION, true)
-            if (Build.VERSION.SDK_INT >= 33) {
-                putExtra(DevicePolicyManager.EXTRA_PROVISIONING_SKIP_EDUCATION_SCREENS, true)
-            }
-        }
-        provision.launch(intent)
-    }
-
-    fun connectProfiles() {
-        if (Build.VERSION.SDK_INT >= 30) {
-            val cpa = context.getSystemService(CrossProfileApps::class.java)
-            val intent = cpa.createRequestInteractAcrossProfilesIntent()
-            context.startActivity(intent)
-        }
+        clones = VirtualCore.clones(context)
     }
 
     fun cloneSelected() {
         val pkg = selected ?: return
-        val label = CloneEngine.appLabel(context, pkg)
-        CloneLedger.add(context, pkg)
+        val label = clones.find { it.packageName == pkg }?.label
+            ?: VirtualCore.installedOnPhone(context).find { it.packageName == pkg }?.label
+            ?: pkg
         screen = Screen.Home
-        status = "Preparing a fresh copy of $label…"
+        status = "Installing a fresh copy of $label…"
         error = null
         scope.launch {
             try {
-                val uris = withContext(Dispatchers.IO) { CloneEngine.stageApks(context, pkg) }
-                status = "Installing into Second Space…"
-                withContext(Dispatchers.Main) {
-                    CloneEngine.requestClone(context, pkg, uris)
-                }
-                repeat(50) {
-                    delay(400)
-                    if (WorkApps.isCloned(context, pkg)) {
-                        refresh()
-                        status = null
-                        selected = null
-                        return@launch
-                    }
-                }
+                withContext(Dispatchers.IO) { VirtualCore.installFromInstalled(context, pkg) }
                 refresh()
-                status = "If Android asked to install, tap Install. Then come back here."
-                delay(2500)
                 status = null
+                selected = null
             } catch (e: Exception) {
                 status = null
                 error = e.message ?: "Couldn't clone this app."
@@ -192,40 +117,24 @@ fun TwinApp() {
             .windowInsetsPadding(WindowInsets.navigationBars)
     ) {
         when (screen) {
-            Screen.Setup -> SetupScreen(
-                error = error,
-                onCreate = ::createSpace
-            )
             Screen.Home -> HomeScreen(
                 clones = clones,
                 status = status,
                 error = error,
-                needsConnect = Admin.hasWorkProfile(context) &&
-                    Build.VERSION.SDK_INT >= 30 &&
-                    !Admin.canTalkAcrossProfiles(context),
                 onAdd = { screen = Screen.Picker },
                 onSettings = { screen = Screen.Settings },
-                onConnect = ::connectProfiles,
                 onOpen = { app ->
                     try {
-                        WorkApps.launch(context, app)
+                        val act = context.findActivity()
+                        if (act != null) VirtualCore.launch(act, app.packageName)
+                        else Toast.makeText(context, "Couldn't open", Toast.LENGTH_SHORT).show()
                     } catch (e: Exception) {
-                        Toast.makeText(context, e.message ?: "Couldn't open", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, e.message ?: "Couldn't open", Toast.LENGTH_LONG).show()
                     }
                 },
                 onRemove = { app ->
-                    try {
-                        CloneLedger.remove(context, app.packageName)
-                        CloneEngine.requestUninstall(context, app.packageName)
-                        status = "Removing ${app.label}…"
-                        scope.launch {
-                            delay(1500)
-                            refresh()
-                            status = null
-                        }
-                    } catch (e: Exception) {
-                        error = e.message
-                    }
+                    VirtualCore.uninstall(context, app.packageName)
+                    refresh()
                 }
             )
             Screen.Picker -> PickerScreen(
@@ -238,11 +147,9 @@ fun TwinApp() {
             Screen.Settings -> SettingsScreen(
                 onBack = { screen = Screen.Home },
                 onWipe = {
-                    try {
-                        CloneEngine.requestWipe(context)
-                    } catch (e: Exception) {
-                        Toast.makeText(context, e.message ?: "Couldn't remove space", Toast.LENGTH_LONG).show()
-                    }
+                    VirtualCore.wipe(context)
+                    refresh()
+                    screen = Screen.Home
                 }
             )
         }
@@ -250,52 +157,14 @@ fun TwinApp() {
 }
 
 @Composable
-private fun SetupScreen(error: String?, onCreate: () -> Unit) {
-    Column(
-        Modifier
-            .fillMaxSize()
-            .padding(24.dp),
-        verticalArrangement = Arrangement.SpaceBetween
-    ) {
-        Column {
-            Text("TWINSPACE", color = MaterialTheme.colorScheme.onSurfaceVariant, letterSpacing = 4.sp, fontSize = 11.sp)
-            Spacer(Modifier.height(28.dp))
-            Text("A second copy.\nYour save stays yours.", fontSize = 34.sp, fontWeight = FontWeight.Medium, lineHeight = 40.sp)
-            Spacer(Modifier.height(16.dp))
-            Text(
-                "Install a fresh Hill Climb Racing (or any app) next to the one you already play. Your brother's game starts from zero. Yours is untouched.",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                fontSize = 16.sp,
-                lineHeight = 24.sp
-            )
-        }
-        Column {
-            if (error != null) {
-                Text(error, color = MaterialTheme.colorScheme.error, fontSize = 14.sp, modifier = Modifier.padding(bottom = 16.dp))
-            }
-            PrimaryButton("Create second space", onCreate)
-            Spacer(Modifier.height(12.dp))
-            Text(
-                "Android will ask to set up a work profile. That's the isolated space. TwinSpace is the owner of it — not your employer.",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                fontSize = 13.sp,
-                lineHeight = 18.sp
-            )
-        }
-    }
-}
-
-@Composable
 private fun HomeScreen(
-    clones: List<ClonedApp>,
+    clones: List<InstalledApp>,
     status: String?,
     error: String?,
-    needsConnect: Boolean,
     onAdd: () -> Unit,
     onSettings: () -> Unit,
-    onConnect: () -> Unit,
-    onOpen: (ClonedApp) -> Unit,
-    onRemove: (ClonedApp) -> Unit
+    onOpen: (InstalledApp) -> Unit,
+    onRemove: (InstalledApp) -> Unit
 ) {
     Box(Modifier.fillMaxSize()) {
         Column(
@@ -305,7 +174,7 @@ private fun HomeScreen(
         ) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f).padding(top = 12.dp, bottom = 8.dp)) {
-                    Text("SECOND SPACE", color = MaterialTheme.colorScheme.onSurfaceVariant, letterSpacing = 3.sp, fontSize = 11.sp)
+                    Text("TWINSPACE", color = MaterialTheme.colorScheme.onSurfaceVariant, letterSpacing = 3.sp, fontSize = 11.sp)
                     Text("Clones", fontSize = 32.sp, fontWeight = FontWeight.Medium)
                 }
                 IconButton(onClick = onSettings) {
@@ -313,26 +182,11 @@ private fun HomeScreen(
                 }
             }
             Text(
-                "Fresh copies. Your original saves stay on the main app.",
+                "Each clone runs inside TwinSpace with its own save. Your original app is not touched.",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontSize = 14.sp
             )
             Spacer(Modifier.height(16.dp))
-            if (needsConnect) {
-                Column(
-                    Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(MaterialTheme.colorScheme.surface)
-                        .padding(16.dp)
-                ) {
-                    Text("Allow TwinSpace to reach Second Space", fontWeight = FontWeight.Medium)
-                    Spacer(Modifier.height(6.dp))
-                    Text("Android needs one extra permission so clones can be installed.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
-                    TextButton(onClick = onConnect) { Text("Open connected apps") }
-                }
-                Spacer(Modifier.height(12.dp))
-            }
             if (status != null) {
                 Row(
                     Modifier
@@ -401,7 +255,7 @@ private fun HomeScreen(
 }
 
 @Composable
-private fun CloneTile(app: ClonedApp, onOpen: () -> Unit, onRemove: () -> Unit) {
+private fun CloneTile(app: InstalledApp, onOpen: () -> Unit, onRemove: () -> Unit) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier.combinedClickable(onClick = onOpen, onLongClick = onRemove)
@@ -433,7 +287,7 @@ private fun PickerScreen(
     var query by remember { mutableStateOf("") }
     var apps by remember { mutableStateOf<List<InstalledApp>>(emptyList()) }
     LaunchedEffect(Unit) {
-        apps = withContext(Dispatchers.Default) { WorkApps.installedOnPhone(context) }
+        apps = withContext(Dispatchers.Default) { VirtualCore.installedOnPhone(context) }
     }
     val filtered = remember(apps, query) {
         val q = query.trim().lowercase()
@@ -483,7 +337,7 @@ private fun PickerScreen(
                     Column(Modifier.weight(1f)) {
                         Text(app.label, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text(
-                            if (cloned) "Already in Second Space" else app.packageName,
+                            if (cloned) "Already in TwinSpace" else app.packageName,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             fontSize = 12.sp,
                             maxLines = 1,
@@ -506,26 +360,16 @@ private fun SettingsScreen(onBack: () -> Unit, onWipe: () -> Unit) {
         Spacer(Modifier.height(12.dp))
         Text("Settings", fontSize = 32.sp, fontWeight = FontWeight.Medium)
         Spacer(Modifier.height(20.dp))
-        Text("Second Space is an Android work profile owned by TwinSpace. Apps inside it have their own data — a new save, a new login.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 15.sp, lineHeight = 22.sp)
+        Text(
+            "Clones run in TwinSpace’s container — a private copy of the APK with its own files, prefs, and databases. No work profile. Your original install stays on the phone.",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontSize = 15.sp,
+            lineHeight = 22.sp
+        )
         Spacer(Modifier.height(24.dp))
-        Text("Remove second space", color = MaterialTheme.colorScheme.error, modifier = Modifier.clickable(onClick = onWipe))
+        Text("Remove all clones", color = MaterialTheme.colorScheme.error, modifier = Modifier.clickable(onClick = onWipe))
         Spacer(Modifier.height(8.dp))
         Text("Deletes every cloned app and its data. Your original games are not touched.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
-    }
-}
-
-@Composable
-private fun PrimaryButton(label: String, onClick: () -> Unit) {
-    Box(
-        Modifier
-            .fillMaxWidth()
-            .height(52.dp)
-            .clip(RoundedCornerShape(16.dp))
-            .background(MaterialTheme.colorScheme.primary)
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(label, color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Medium)
     }
 }
 
@@ -533,6 +377,15 @@ private fun PrimaryButton(label: String, onClick: () -> Unit) {
 private fun AppIcon(drawable: Drawable, modifier: Modifier = Modifier) {
     val bitmap = remember(drawable) { drawable.toBitmapCompat() }
     Image(bitmap = bitmap.asImageBitmap(), contentDescription = null, modifier = modifier)
+}
+
+private fun Context.findActivity(): Activity? {
+    var ctx: Context? = this
+    while (ctx is ContextWrapper) {
+        if (ctx is Activity) return ctx
+        ctx = ctx.baseContext
+    }
+    return null
 }
 
 private fun Drawable.toBitmapCompat(): Bitmap {

@@ -2,9 +2,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
-    <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
-    <uses-permission android:name="android.permission.INTERACT_ACROSS_PROFILES" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission
         android:name="android.permission.QUERY_ALL_PACKAGES"
         tools:ignore="QueryAllPackagesPermission" />
@@ -19,8 +21,10 @@
     <application
         android:name=".TwinSpaceApp"
         android:allowBackup="false"
+        android:hardwareAccelerated="true"
         android:icon="@drawable/ic_launcher"
         android:label="@string/app_name"
+        android:largeHeap="true"
         android:roundIcon="@drawable/ic_launcher"
         android:supportsRtl="true"
         android:theme="@style/Theme.TwinSpace">
@@ -36,76 +40,13 @@
             </intent-filter>
         </activity>
 
-        <!-- Enabled only inside the work profile after provisioning. -->
-        <activity
-            android:name=".CloneInstallActivity"
-            android:enabled="false"
-            android:excludeFromRecents="true"
-            android:exported="true"
-            android:theme="@style/Theme.TwinSpace">
-            <intent-filter>
-                <action android:name="com.twinspace.app.action.CLONE" />
-                <action android:name="com.twinspace.app.action.UNINSTALL" />
-                <action android:name="com.twinspace.app.action.WIPE_SPACE" />
-                <category android:name="android.intent.category.DEFAULT" />
-            </intent-filter>
-        </activity>
-
-        <activity
-            android:name=".GetProvisioningModeActivity"
-            android:exported="true"
-            android:theme="@style/Theme.TwinSpace">
-            <intent-filter>
-                <action android:name="android.app.action.GET_PROVISIONING_MODE" />
-                <category android:name="android.intent.category.DEFAULT" />
-            </intent-filter>
-        </activity>
-
-        <activity
-            android:name=".PolicyComplianceActivity"
-            android:exported="true"
-            android:theme="@style/Theme.TwinSpace">
-            <intent-filter>
-                <action android:name="android.app.action.ADMIN_POLICY_COMPLIANCE" />
-                <category android:name="android.intent.category.DEFAULT" />
-            </intent-filter>
-        </activity>
-
-        <activity
-            android:name=".ProvisioningSuccessActivity"
-            android:exported="true"
-            android:theme="@style/Theme.TwinSpace">
-            <intent-filter>
-                <action android:name="android.app.action.PROVISIONING_SUCCESSFUL" />
-                <category android:name="android.intent.category.DEFAULT" />
-            </intent-filter>
-        </activity>
-
-        <receiver
-            android:name=".TwinAdminReceiver"
-            android:exported="true"
-            android:permission="android.permission.BIND_DEVICE_ADMIN">
-            <meta-data
-                android:name="android.app.device_admin"
-                android:resource="@xml/device_admin" />
-            <intent-filter>
-                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
-                <action android:name="android.app.action.PROFILE_PROVISIONING_COMPLETE" />
-            </intent-filter>
-        </receiver>
-
-        <receiver
-            android:name=".InstallResultReceiver"
-            android:exported="false" />
-
-        <provider
-            android:name="androidx.core.content.FileProvider"
-            android:authorities="${applicationId}.files"
-            android:exported="false"
-            android:grantUriPermissions="true">
-            <meta-data
-                android:name="android.support.FILE_PROVIDER_PATHS"
-                android:resource="@xml/file_paths" />
-        </provider>
+        <activity android:name=".virtual.C1" android:process=":c1" android:exported="false" android:excludeFromRecents="true" android:hardwareAccelerated="true" android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|uiMode" android:theme="@android:style/Theme.DeviceDefault.NoActionBar" />
+        <activity android:name=".virtual.C2" android:process=":c2" android:exported="false" android:excludeFromRecents="true" android:hardwareAccelerated="true" android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|uiMode" android:theme="@android:style/Theme.DeviceDefault.NoActionBar" />
+        <activity android:name=".virtual.C3" android:process=":c3" android:exported="false" android:excludeFromRecents="true" android:hardwareAccelerated="true" android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|uiMode" android:theme="@android:style/Theme.DeviceDefault.NoActionBar" />
+        <activity android:name=".virtual.C4" android:process=":c4" android:exported="false" android:excludeFromRecents="true" android:hardwareAccelerated="true" android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|uiMode" android:theme="@android:style/Theme.DeviceDefault.NoActionBar" />
+        <activity android:name=".virtual.C5" android:process=":c5" android:exported="false" android:excludeFromRecents="true" android:hardwareAccelerated="true" android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|uiMode" android:theme="@android:style/Theme.DeviceDefault.NoActionBar" />
+        <activity android:name=".virtual.C6" android:process=":c6" android:exported="false" android:excludeFromRecents="true" android:hardwareAccelerated="true" android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|uiMode" android:theme="@android:style/Theme.DeviceDefault.NoActionBar" />
+        <activity android:name=".virtual.C7" android:process=":c7" android:exported="false" android:excludeFromRecents="true" android:hardwareAccelerated="true" android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|uiMode" android:theme="@android:style/Theme.DeviceDefault.NoActionBar" />
+        <activity android:name=".virtual.C8" android:process=":c8" android:exported="false" android:excludeFromRecents="true" android:hardwareAccelerated="true" android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|uiMode" android:theme="@android:style/Theme.DeviceDefault.NoActionBar" />
     </application>
 </manifest>
