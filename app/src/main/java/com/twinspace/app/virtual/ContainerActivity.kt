@@ -101,7 +101,7 @@ open class ContainerActivity : Activity() {
         ActivityAttacher.attach(created, isolatedCtx, app, launch, info, this, instrumentation)
         Instrumentation().callActivityOnCreate(created, null)
         if (!first) {
-            runCatching { created.onStart() }
+            runCatching { Instrumentation().callActivityOnStart(created) }
             runCatching { Instrumentation().callActivityOnResume(created) }
         }
         guest = created
@@ -130,7 +130,7 @@ open class ContainerActivity : Activity() {
 
     override fun onStart() {
         super.onStart()
-        runCatching { guest?.onStart() }
+        runCatching { Instrumentation().callActivityOnStart(guest ?: return) }
     }
 
     override fun onResume() {
@@ -144,7 +144,7 @@ open class ContainerActivity : Activity() {
     }
 
     override fun onStop() {
-        runCatching { guest?.onStop() }
+        runCatching { Instrumentation().callActivityOnStop(guest ?: return@runCatching) }
         super.onStop()
     }
 

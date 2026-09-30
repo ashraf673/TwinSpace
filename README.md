@@ -33,4 +33,4 @@ This is not OS-level virtualization (Parallel Space / VirtualApp) and not a work
 2. Run workflow **TwinSpace - Stage 1 Android APK**.
 3. Download the debug APK from artifacts.
 
-Package: `com.twinspace.app` · minSdk 26 · targetSdk 35 · version 3.0
+Package: `com.twinspace.app` · minSdk 26 · targetSdk 35 · version 3.0.1

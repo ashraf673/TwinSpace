@@ -36,8 +36,10 @@ object GuestLoader {
             base.absolutePath,
             PackageManager.GET_ACTIVITIES or PackageManager.GET_META_DATA
         ) ?: throw IllegalStateException("Could not read cloned APK")
-        parsed.applicationInfo.sourceDir = base.absolutePath
-        parsed.applicationInfo.publicSourceDir = base.absolutePath
+        val archiveInfo = parsed.applicationInfo
+            ?: throw IllegalStateException("Could not read cloned APK")
+        archiveInfo.sourceDir = base.absolutePath
+        archiveInfo.publicSourceDir = base.absolutePath
 
         val activities = parsed.activities?.toList() ?: emptyList()
         val launchClass = runCatching {
@@ -62,15 +64,15 @@ object GuestLoader {
         val loader = DexClassLoader(dexPath, odex.absolutePath, libPath, parent)
         val resources = resourcesFor(host, apkFiles)
 
-        val appInfo = parsed.applicationInfo.apply {
+        val appInfo = archiveInfo.apply {
             dataDir = File(root, "data").absolutePath
             nativeLibraryDir = libDir.absolutePath
             processName = packageName
             uid = host.applicationInfo.uid
         }
 
-        val label = parsed.applicationInfo.loadLabel(pm).toString().ifBlank { packageName }
-        val appClass = parsed.applicationInfo.className
+        val label = appInfo.loadLabel(pm).toString().ifBlank { packageName }
+        val appClass = appInfo.className
 
         activities.forEach { it.applicationInfo = appInfo }
         launcherResolved.applicationInfo = appInfo

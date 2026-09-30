@@ -95,12 +95,13 @@ object VirtualCore {
             val base = File(root(context, pkg), "apk/base.apk")
             if (!base.exists()) return null
             val parsed = pm.getPackageArchiveInfo(base.absolutePath, 0) ?: return null
-            parsed.applicationInfo.sourceDir = base.absolutePath
-            parsed.applicationInfo.publicSourceDir = base.absolutePath
+            val appInfo = parsed.applicationInfo ?: return null
+            appInfo.sourceDir = base.absolutePath
+            appInfo.publicSourceDir = base.absolutePath
             InstalledApp(
                 pkg,
-                parsed.applicationInfo.loadLabel(pm).toString(),
-                parsed.applicationInfo.loadIcon(pm)
+                appInfo.loadLabel(pm).toString(),
+                appInfo.loadIcon(pm)
             )
         }
     }

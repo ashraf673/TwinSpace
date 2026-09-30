@@ -5,18 +5,20 @@ import java.lang.reflect.Method
 object HiddenApi {
     fun exempt() {
         try {
+            val classArray = arrayOf<Class<*>>().javaClass
+            val stringArray = arrayOf<String>().javaClass
             val forName = Class::class.java.getDeclaredMethod("forName", String::class.java)
             val getDeclared = Class::class.java.getDeclaredMethod(
                 "getDeclaredMethod",
                 String::class.java,
-                Array<Class<*>>::class.java
+                classArray
             )
             val vmRuntimeClass = forName.invoke(null, "dalvik.system.VMRuntime") as Class<*>
             val getRuntime = getDeclared.invoke(vmRuntimeClass, "getRuntime", null) as Method
             val setExemptions = getDeclared.invoke(
                 vmRuntimeClass,
                 "setHiddenApiExemptions",
-                arrayOf(Array<String>::class.java)
+                arrayOf(stringArray)
             ) as Method
             val vmRuntime = getRuntime.invoke(null)
             setExemptions.invoke(vmRuntime, arrayOf("L") as Any)
