@@ -19,7 +19,7 @@ class IsolatedContext(
     private val guestPackage: String,
     private val guestAppInfo: ApplicationInfo,
     private val guestResources: Resources,
-    private val guestLoader: ClassLoader,
+    var guestLoader: ClassLoader,
     private val dataRoot: File
 ) : ContextWrapper(host) {
 

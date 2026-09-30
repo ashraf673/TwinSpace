@@ -48,11 +48,18 @@ open class ContainerActivity : Activity() {
         isolated = isolatedCtx
         val instrumentation = IsolatedInstrumentation(this)
         instr = instrumentation
+        Thread.currentThread().contextClassLoader = loadedPkg.classLoader
 
         val app = instantiateApplication(loadedPkg)
         ActivityAttacher.attachApplication(app, isolatedCtx)
         app.onCreate()
         guestApp = app
+        val liveLoader = listOfNotNull(
+            app.classLoader,
+            Thread.currentThread().contextClassLoader,
+            loadedPkg.classLoader
+        ).first()
+        isolatedCtx.guestLoader = liveLoader
 
         startGuest(loadedPkg.launcher.name, Intent(Intent.ACTION_MAIN).apply {
             addCategory(Intent.CATEGORY_LAUNCHER)
@@ -96,7 +103,7 @@ open class ContainerActivity : Activity() {
 
         val info = loadedPkg.activities.firstOrNull { it.name == className } ?: loadedPkg.launcher
         info.applicationInfo = loadedPkg.appInfo
-        val activityClass = loadedPkg.classLoader.loadClass(className)
+        val activityClass = resolveClass(className)
         val created = activityClass.getDeclaredConstructor().newInstance() as Activity
         ActivityAttacher.attach(created, isolatedCtx, app, launch, info, this, instrumentation)
         Instrumentation().callActivityOnCreate(created, null)
@@ -110,16 +117,52 @@ open class ContainerActivity : Activity() {
     private fun instantiateApplication(loadedPkg: GuestPackage): Application {
         val name = loadedPkg.applicationClass
         if (name.isNullOrBlank()) return Application()
-        val cls = loadedPkg.classLoader.loadClass(name)
+        val cls = resolveClass(name)
         return cls.getDeclaredConstructor().newInstance() as Application
     }
 
+    private fun resolveClass(className: String): Class<*> {
+        val loaders = linkedSetOf<ClassLoader>()
+        Thread.currentThread().contextClassLoader?.let { loaders += it }
+        guestApp?.classLoader?.let { loaders += it }
+        isolated?.guestLoader?.let { loaders += it }
+        loaded?.classLoader?.let { loaders += it }
+        var last: ClassNotFoundException? = null
+        for (cl in loaders) {
+            try {
+                return Class.forName(className, true, cl)
+            } catch (e: ClassNotFoundException) {
+                last = e
+            } catch (e: NoClassDefFoundError) {
+                last = ClassNotFoundException(className, e)
+            }
+        }
+        throw last ?: ClassNotFoundException(className)
+    }
+
     private fun showError(pkg: String, t: Throwable) {
+        val cause = generateSequence(t) { it.cause }.last()
+        val hardApp = pkg.startsWith("com.instagram.") ||
+            pkg.startsWith("com.facebook.") ||
+            pkg.startsWith("com.whatsapp")
+        val body = when {
+            cause is ClassNotFoundException && hardApp ->
+                "Couldn't start this copy of $pkg.\n\n" +
+                    "Instagram, Facebook, and similar apps hide their code and block clone apps. " +
+                    "Your original install is untouched.\n\n" +
+                    "Clone a game instead — Hill Climb Racing is the kind TwinSpace is built for."
+            cause is ClassNotFoundException ->
+                "Couldn't start this copy of $pkg.\n\n" +
+                    "The app's code didn't load in TwinSpace. Try removing it and adding it again, " +
+                    "or pick a simpler game."
+            else ->
+                "Couldn't start this copy of $pkg.\n\n${cause.javaClass.simpleName}: ${cause.message}"
+        }
         val text = TextView(this).apply {
             setTextColor(0xFFF4F4F5.toInt())
             textSize = 15f
             setPadding(48, 96, 48, 48)
-            text = "Couldn't start this copy of $pkg.\n\n${t.javaClass.simpleName}: ${t.message}"
+            this.text = body
         }
         val root = FrameLayout(this).apply {
             setBackgroundColor(0xFF09090B.toInt())

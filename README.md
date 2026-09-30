@@ -25,7 +25,7 @@ TwinSpace hosts selected installed APKs inside its own virtual runtime:
 
 The original app keeps its own UID and `/data/data/<package>` directory. TwinSpace cannot write there, so the original save stays safe.
 
-This is not OS-level virtualization (Parallel Space / VirtualApp) and not a work profile. Heavy games with anti-cheat or Play Integrity may refuse the container. Casual games like Hill Climb Racing are the target.
+This is not OS-level virtualization (Parallel Space / VirtualApp) and not a work profile. Instagram, Facebook, and some games with anti-cheat or Play Integrity may still refuse. Casual games like Hill Climb Racing are the target.
 
 ## Codemagic (Stage 1)
 
@@ -33,4 +33,4 @@ This is not OS-level virtualization (Parallel Space / VirtualApp) and not a work
 2. Run workflow **TwinSpace - Stage 1 Android APK**.
 3. Download the debug APK from artifacts.
 
-Package: `com.twinspace.app` · minSdk 26 · targetSdk 35 · version 3.0.2
+Package: `com.twinspace.app` · minSdk 26 · targetSdk 35 · version 3.0.3

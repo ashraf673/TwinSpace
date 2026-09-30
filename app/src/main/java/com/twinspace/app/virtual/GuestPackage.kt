@@ -3,12 +3,16 @@ package com.twinspace.app.virtual
 import android.content.Context
 import android.content.pm.ActivityInfo
 import android.content.pm.ApplicationInfo
-import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.content.res.AssetManager
 import android.content.res.Resources
+import android.os.Build
 import dalvik.system.DexClassLoader
+import dalvik.system.InMemoryDexClassLoader
+import dalvik.system.PathClassLoader
 import java.io.File
+import java.nio.ByteBuffer
+import java.util.zip.ZipFile
 
 data class GuestPackage(
     val packageName: String,
@@ -28,57 +32,90 @@ object GuestLoader {
     fun load(host: Context, packageName: String): GuestPackage {
         val root = VirtualCore.root(host, packageName)
         val apkDir = File(root, "apk")
-        val apkFiles = apkDir.listFiles { _, name -> name.endsWith(".apk") }?.sortedBy { it.name }
-            ?: throw IllegalStateException("Clone is missing APKs")
-        val base = apkFiles.firstOrNull { it.name == "base.apk" } ?: apkFiles.first()
+        val copiedApks = apkDir.listFiles { _, name -> name.endsWith(".apk") }?.sortedBy { it.name }
+            ?: emptyList()
         val pm = host.packageManager
-        val parsed: PackageInfo = pm.getPackageArchiveInfo(
-            base.absolutePath,
-            PackageManager.GET_ACTIVITIES or PackageManager.GET_META_DATA
-        ) ?: throw IllegalStateException("Could not read cloned APK")
-        val archiveInfo = parsed.applicationInfo
-            ?: throw IllegalStateException("Could not read cloned APK")
-        archiveInfo.sourceDir = base.absolutePath
-        archiveInfo.publicSourceDir = base.absolutePath
+        val installedInfo = runCatching { pm.getApplicationInfo(packageName, 0) }.getOrNull()
+        val liveApks = installedInfo?.let { VirtualCore.installedApks(it) } ?: emptyList()
+        val apkFiles = (liveApks + copiedApks).distinctBy { it.absolutePath }
+        if (apkFiles.isEmpty()) throw IllegalStateException("Clone is missing APKs")
 
-        val activities = parsed.activities?.toList() ?: emptyList()
-        val launchClass = runCatching {
-            host.packageManager.getLaunchIntentForPackage(packageName)?.component?.className
+        val installedPkg = runCatching {
+            pm.getPackageInfo(
+                packageName,
+                PackageManager.GET_ACTIVITIES or PackageManager.GET_META_DATA
+            )
         }.getOrNull()
-        val launcherResolved = activities.firstOrNull { info ->
-            info.name == launchClass ||
-                (launchClass != null && info.name.endsWith(launchClass.substringAfterLast('.')))
-        } ?: activities.firstOrNull()
-            ?: throw IllegalStateException("No activity to launch")
+        val archiveBase = copiedApks.firstOrNull { it.name == "base.apk" } ?: copiedApks.firstOrNull()
+            ?: liveApks.first()
+        val archive = pm.getPackageArchiveInfo(
+            archiveBase.absolutePath,
+            PackageManager.GET_ACTIVITIES or PackageManager.GET_META_DATA
+        )
 
-        val abi = android.os.Build.SUPPORTED_ABIS.firstOrNull() ?: "arm64-v8a"
+        val realInfo = installedInfo
+            ?: installedPkg?.applicationInfo
+            ?: archive?.applicationInfo
+            ?: throw IllegalStateException("Could not read cloned APK")
+
+        val abi = Build.SUPPORTED_ABIS.firstOrNull() ?: "arm64-v8a"
         val libRoot = File(root, "lib")
         val libDir = File(libRoot, abi).apply { mkdirs() }
-        val libPath = (libRoot.listFiles()?.filter { it.isDirectory }?.map { it.absolutePath }
-            ?: emptyList())
-            .ifEmpty { listOf(libDir.absolutePath) }
-            .joinToString(File.pathSeparator)
-        val odex = File(root, "odex").apply { mkdirs() }
-        val dexPath = apkFiles.joinToString(File.pathSeparator) { it.absolutePath }
-        val parent = host.classLoader.parent ?: ClassLoader.getSystemClassLoader()
-        val loader = DexClassLoader(dexPath, odex.absolutePath, libPath, parent)
-        val resources = resourcesFor(host, apkFiles)
+        val dataRoot = File(root, "data").apply { mkdirs() }
 
-        val appInfo = archiveInfo.apply {
-            dataDir = File(root, "data").absolutePath
-            nativeLibraryDir = libDir.absolutePath
+        val appInfo = ApplicationInfo(realInfo).apply {
+            sourceDir = realInfo.sourceDir ?: archiveBase.absolutePath
+            publicSourceDir = realInfo.publicSourceDir ?: sourceDir
+            splitSourceDirs = realInfo.splitSourceDirs
+            dataDir = dataRoot.absolutePath
+            nativeLibraryDir = realInfo.nativeLibraryDir?.takeIf { File(it).exists() }
+                ?: libDir.absolutePath
             processName = packageName
             uid = host.applicationInfo.uid
         }
 
-        val label = appInfo.loadLabel(pm).toString().ifBlank { packageName }
-        val appClass = appInfo.className
-
+        val activities = (installedPkg?.activities?.toList() ?: emptyList())
+            .ifEmpty { archive?.activities?.toList() ?: emptyList() }
+        val launchClass = runCatching {
+            pm.getLaunchIntentForPackage(packageName)?.component?.className
+        }.getOrNull()
+            ?: activities.firstOrNull()?.name
+            ?: throw IllegalStateException("No activity to launch")
+        val launcherResolved = activities.firstOrNull { it.name == launchClass }
+            ?: ActivityInfo().apply {
+                name = launchClass
+                this.packageName = packageName
+            }
         activities.forEach { it.applicationInfo = appInfo }
         launcherResolved.applicationInfo = appInfo
 
+        val libPath = VirtualCore.nativeLibPath(realInfo, libRoot)
+        val parent = host.classLoader.parent ?: ClassLoader.getSystemClassLoader()
+        val loader = pickClassLoader(
+            host = host,
+            packageName = packageName,
+            launchClass = launchClass,
+            liveApks = liveApks,
+            copiedApks = copiedApks,
+            libPath = libPath,
+            odexDir = File(root, "odex").apply { mkdirs() },
+            parent = parent
+        )
+        val resources = runCatching {
+            host.createPackageContext(
+                packageName,
+                Context.CONTEXT_IGNORE_SECURITY
+            ).resources
+        }.getOrNull() ?: resourcesFor(host, if (liveApks.isNotEmpty()) liveApks else copiedApks)
+
+        val label = runCatching { pm.getApplicationLabel(realInfo).toString() }.getOrNull()
+            .orEmpty().ifBlank { packageName }
+        val appClass = installedPkg?.applicationInfo?.className
+            ?: archive?.applicationInfo?.className
+            ?: realInfo.className
+
         return GuestPackage(
-            packageName = parsed.packageName,
+            packageName = packageName,
             label = label,
             applicationClass = appClass,
             launcher = launcherResolved,
@@ -86,10 +123,108 @@ object GuestLoader {
             appInfo = appInfo,
             apkFiles = apkFiles,
             libDir = libDir,
-            dataRoot = File(root, "data").apply { mkdirs() },
+            dataRoot = dataRoot,
             classLoader = loader,
             resources = resources
         )
+    }
+
+    private fun pickClassLoader(
+        host: Context,
+        packageName: String,
+        launchClass: String,
+        liveApks: List<File>,
+        copiedApks: List<File>,
+        libPath: String,
+        odexDir: File,
+        parent: ClassLoader
+    ): ClassLoader {
+        val candidates = mutableListOf<ClassLoader>()
+
+        runCatching {
+            val pkgCtx = host.createPackageContext(
+                packageName,
+                Context.CONTEXT_INCLUDE_CODE or Context.CONTEXT_IGNORE_SECURITY
+            )
+            pkgCtx.classLoader?.let { candidates += it }
+        }
+        if (liveApks.isNotEmpty()) {
+            runCatching {
+                candidates += PathClassLoader(
+                    liveApks.joinToString(File.pathSeparator) { it.absolutePath },
+                    libPath,
+                    parent
+                )
+            }
+        }
+        if (copiedApks.isNotEmpty()) {
+            runCatching {
+                candidates += PathClassLoader(
+                    copiedApks.joinToString(File.pathSeparator) { it.absolutePath },
+                    libPath,
+                    parent
+                )
+            }
+            runCatching {
+                memoryLoader(copiedApks + liveApks, libPath, parent)?.let { candidates += it }
+            }
+            runCatching {
+                candidates += DexClassLoader(
+                    copiedApks.joinToString(File.pathSeparator) { it.absolutePath },
+                    odexDir.absolutePath,
+                    libPath,
+                    parent
+                )
+            }
+        } else if (liveApks.isNotEmpty()) {
+            runCatching {
+                memoryLoader(liveApks, libPath, parent)?.let { candidates += it }
+            }
+        }
+
+        val found = candidates.firstOrNull { cl ->
+            runCatching { cl.loadClass(launchClass); true }.getOrDefault(false)
+        }
+        return found
+            ?: candidates.firstOrNull()
+            ?: throw IllegalStateException("Could not load $packageName")
+    }
+
+    private fun memoryLoader(
+        apkFiles: List<File>,
+        libPath: String,
+        parent: ClassLoader
+    ): ClassLoader? {
+        val buffers = apkFiles.distinctBy { it.absolutePath }.flatMap { dexBuffers(it) }
+        if (buffers.isEmpty()) return null
+        return when {
+            Build.VERSION.SDK_INT >= 29 ->
+                InMemoryDexClassLoader(buffers.toTypedArray(), libPath, parent)
+            Build.VERSION.SDK_INT >= 27 ->
+                InMemoryDexClassLoader(buffers.toTypedArray(), parent)
+            else -> buffers.fold(parent) { acc, buf -> InMemoryDexClassLoader(buf, acc) }
+        }
+    }
+
+    private fun dexBuffers(apk: File): List<ByteBuffer> {
+        if (!apk.exists()) return emptyList()
+        return try {
+            ZipFile(apk).use { zip ->
+                zip.entries().asSequence()
+                    .filter { !it.isDirectory && it.name.matches(Regex("^classes\\d*\\.dex$")) }
+                    .sortedBy { it.name }
+                    .mapNotNull { entry ->
+                        val bytes = zip.getInputStream(entry).use { it.readBytes() }
+                        if (bytes.size < 8) return@mapNotNull null
+                        ByteBuffer.allocateDirect(bytes.size).apply {
+                            put(bytes)
+                            flip()
+                        }
+                    }
+            }
+        } catch (_: Throwable) {
+            emptyList()
+        }
     }
 
     fun resourcesFor(host: Context, apkFiles: List<File>): Resources {

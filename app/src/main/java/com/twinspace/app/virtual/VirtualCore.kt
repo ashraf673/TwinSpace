@@ -24,15 +24,43 @@ object VirtualCore {
         val apkDir = File(root, "apk")
         apkDir.deleteRecursively()
         apkDir.mkdirs()
-        val paths = mutableListOf(info.sourceDir)
-        info.splitSourceDirs?.let { paths.addAll(it) }
-        paths.map { File(it) }.filter { it.exists() }.forEachIndexed { index, src ->
-            val name = if (index == 0) "base.apk" else "split-$index.apk"
+        installedApks(info).forEachIndexed { index, src ->
+            val name = src.name.ifBlank {
+                if (index == 0) "base.apk" else "split-$index.apk"
+            }
             src.copyTo(File(apkDir, name), overwrite = true)
         }
-        extractNativeLibs(apkDir, File(root, "lib"))
+        val libRoot = File(root, "lib")
+        extractNativeLibs(apkDir, libRoot)
+        copyInstalledNativeLibs(info, libRoot)
         File(root, "data").mkdirs()
         CloneLedger.add(context, packageName)
+    }
+
+    fun installedApks(info: ApplicationInfo): List<File> {
+        val out = linkedSetOf<File>()
+        info.sourceDir?.let { out += File(it) }
+        info.publicSourceDir?.let { out += File(it) }
+        info.splitSourceDirs?.forEach { out += File(it) }
+        info.splitPublicSourceDirs?.forEach { out += File(it) }
+        info.sourceDir?.let { src ->
+            File(src).parentFile?.listFiles()?.forEach { f ->
+                if (f.isFile && f.extension == "apk") out += f
+            }
+        }
+        return out.filter { it.exists() && it.isFile }
+    }
+
+    fun nativeLibPath(info: ApplicationInfo, extracted: File): String {
+        val dirs = linkedSetOf<String>()
+        info.nativeLibraryDir?.takeIf { File(it).exists() }?.let { dirs += it }
+        info.sourceDir?.let { src ->
+            File(src).parentFile?.resolve("lib")?.listFiles()
+                ?.filter { it.isDirectory }
+                ?.forEach { dirs += it.absolutePath }
+        }
+        extracted.listFiles()?.filter { it.isDirectory }?.forEach { dirs += it.absolutePath }
+        return dirs.joinToString(File.pathSeparator)
     }
 
     fun uninstall(context: Context, packageName: String) {
@@ -50,8 +78,10 @@ object VirtualCore {
         clearFallbackPrefs(context, null)
     }
 
-    fun isInstalled(context: Context, packageName: String): Boolean =
-        File(root(context, packageName), "apk/base.apk").exists()
+    fun isInstalled(context: Context, packageName: String): Boolean {
+        val dir = File(root(context, packageName), "apk")
+        return dir.listFiles { _, name -> name.endsWith(".apk") }?.isNotEmpty() == true
+    }
 
     fun launch(activity: Activity, packageName: String) {
         if (!isInstalled(activity, packageName)) {
@@ -123,6 +153,17 @@ object VirtualCore {
         dir.listFiles()?.forEach { file ->
             if (file.name.startsWith(prefix) && file.name.endsWith(".xml")) {
                 file.delete()
+            }
+        }
+    }
+
+    private fun copyInstalledNativeLibs(info: ApplicationInfo, dest: File) {
+        val srcLib = info.sourceDir?.let { File(it).parentFile?.resolve("lib") } ?: return
+        srcLib.listFiles()?.forEach { abiDir ->
+            if (!abiDir.isDirectory) return@forEach
+            val out = File(dest, abiDir.name).apply { mkdirs() }
+            abiDir.listFiles()?.forEach { so ->
+                if (so.isFile) runCatching { so.copyTo(File(out, so.name), overwrite = true) }
             }
         }
     }
