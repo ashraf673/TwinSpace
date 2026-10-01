@@ -16,6 +16,7 @@ import java.io.FileOutputStream
 
 class IsolatedContext(
     private val host: Context,
+    private val owner: android.app.Activity?,
     private val guestPackage: String,
     private val guestAppInfo: ApplicationInfo,
     private val guestResources: Resources,
@@ -133,6 +134,7 @@ class IsolatedContext(
     override fun createConfigurationContext(overrideConfiguration: Configuration): Context {
         return IsolatedContext(
             host.createConfigurationContext(overrideConfiguration),
+            owner,
             guestPackage,
             guestAppInfo,
             guestResources,
@@ -154,7 +156,7 @@ class IsolatedContext(
     private fun redirect(intent: Intent) {
         val target = intent.component?.packageName ?: intent.`package`
         if (target == guestPackage) {
-            val hostActivity = host as? ContainerActivity
+            val hostActivity = owner ?: host as? ContainerActivity
             if (hostActivity != null) {
                 hostActivity.consumeStart(intent)
                 return

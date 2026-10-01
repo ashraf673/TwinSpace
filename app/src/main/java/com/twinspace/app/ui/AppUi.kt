@@ -218,7 +218,7 @@ private fun HomeScreen(
                         Text("Nothing cloned yet", fontSize = 18.sp, fontWeight = FontWeight.Medium)
                         Spacer(Modifier.height(8.dp))
                         Text(
-                            "Tap + and pick a game. The copy opens like a brand-new install.",
+                            "Tap + and pick an app. The copy opens like a brand-new install.",
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             textAlign = TextAlign.Center,
                             fontSize = 14.sp
@@ -310,7 +310,7 @@ private fun PickerScreen(
                 .padding(horizontal = 14.dp, vertical = 12.dp)
         ) {
             if (query.isEmpty()) {
-                Text("Search games and apps", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Search installed apps", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             BasicTextField(
                 value = query,
@@ -369,7 +369,7 @@ private fun SettingsScreen(onBack: () -> Unit, onWipe: () -> Unit) {
         Spacer(Modifier.height(24.dp))
         Text("Remove all clones", color = MaterialTheme.colorScheme.error, modifier = Modifier.clickable(onClick = onWipe))
         Spacer(Modifier.height(8.dp))
-        Text("Deletes every cloned app and its data. Your original games are not touched.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+        Text("Deletes every cloned app and its data. Your original apps are not touched.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
     }
 }
 

@@ -15,6 +15,15 @@ workflows:
           curl -L --fail -o /tmp/gradle.zip https://services.gradle.org/distributions/gradle-8.11.1-bin.zip
           unzip -q /tmp/gradle.zip -d /tmp/gradle
           export PATH="/tmp/gradle/gradle-8.11.1/bin:$PATH"
+          SM=""
+          if [ -n "${ANDROID_SDK_ROOT:-}" ]; then
+            for c in "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "$ANDROID_SDK_ROOT/tools/bin/sdkmanager"; do
+              if [ -x "$c" ]; then SM="$c"; break; fi
+            done
+          fi
+          if [ -n "$SM" ]; then
+            yes | "$SM" "ndk;26.1.10909125" "cmake;3.22.1" || true
+          fi
           gradle --version
           gradle assembleDebug --stacktrace
     artifacts:

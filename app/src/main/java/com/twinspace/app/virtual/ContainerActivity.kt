@@ -36,8 +36,16 @@ open class ContainerActivity : Activity() {
 
     private fun bindGuest(pkg: String) {
         val loadedPkg = GuestLoader.load(this, pkg)
+        PathRedirect.install(loadedPkg.packageName, loadedPkg.dataRoot)
+        OsHook.install()
+        PmHook.install(loadedPkg.packageName, loadedPkg.appInfo)
+        IoNative.install(loadedPkg.packageName, loadedPkg.dataRoot)
+        ThreadBind.patchLoadedApk(loadedPkg.loadedApk, loadedPkg.dataRoot, loadedPkg.appInfo)
+
+        val wrapBase = loadedPkg.packageContext ?: this
         val isolatedCtx = IsolatedContext(
-            host = this,
+            host = wrapBase,
+            owner = this,
             guestPackage = loadedPkg.packageName,
             guestAppInfo = loadedPkg.appInfo,
             guestResources = loadedPkg.resources,
@@ -50,16 +58,16 @@ open class ContainerActivity : Activity() {
         instr = instrumentation
         Thread.currentThread().contextClassLoader = loadedPkg.classLoader
 
-        val app = instantiateApplication(loadedPkg)
-        ActivityAttacher.attachApplication(app, isolatedCtx)
-        app.onCreate()
+        var app = ThreadBind.makeApplication(loadedPkg.loadedApk, instrumentation)
+        if (app == null) {
+            app = instantiateApplication(loadedPkg)
+            ActivityAttacher.attachApplication(app, isolatedCtx)
+        }
+        ThreadBind.registerApplication(app)
+        runCatching { app.onCreate() }
         guestApp = app
-        val liveLoader = listOfNotNull(
-            app.classLoader,
-            Thread.currentThread().contextClassLoader,
-            loadedPkg.classLoader
-        ).first()
-        isolatedCtx.guestLoader = liveLoader
+        isolatedCtx.guestLoader = harvestLoader(app, loadedPkg)
+        Thread.currentThread().contextClassLoader = isolatedCtx.guestLoader
 
         startGuest(loadedPkg.launcher.name, Intent(Intent.ACTION_MAIN).apply {
             addCategory(Intent.CATEGORY_LAUNCHER)
@@ -121,12 +129,51 @@ open class ContainerActivity : Activity() {
         return cls.getDeclaredConstructor().newInstance() as Application
     }
 
+    private fun harvestLoader(app: Application, loadedPkg: GuestPackage): ClassLoader {
+        val loaders = linkedSetOf<ClassLoader>()
+        fun add(cl: ClassLoader?) {
+            var c = cl
+            while (c != null && loaders.add(c)) {
+                c = c.parent
+            }
+        }
+        add(app.classLoader)
+        add(Thread.currentThread().contextClassLoader)
+        add(loadedPkg.classLoader)
+        add(loadedPkg.packageContext?.classLoader)
+        runCatching {
+            for (f in app.javaClass.declaredFields) {
+                f.isAccessible = true
+                val v = f.get(app)
+                if (v is ClassLoader) add(v)
+            }
+        }
+        return loaders.firstOrNull() ?: loadedPkg.classLoader
+    }
+
     private fun resolveClass(className: String): Class<*> {
         val loaders = linkedSetOf<ClassLoader>()
-        Thread.currentThread().contextClassLoader?.let { loaders += it }
-        guestApp?.classLoader?.let { loaders += it }
-        isolated?.guestLoader?.let { loaders += it }
-        loaded?.classLoader?.let { loaders += it }
+        fun add(cl: ClassLoader?) {
+            var c = cl
+            while (c != null && loaders.add(c)) {
+                c = c.parent
+            }
+        }
+        add(Thread.currentThread().contextClassLoader)
+        add(guestApp?.classLoader)
+        add(isolated?.guestLoader)
+        add(loaded?.classLoader)
+        add(loaded?.packageContext?.classLoader)
+        runCatching {
+            val app = guestApp
+            if (app != null) {
+                for (f in app.javaClass.declaredFields) {
+                    f.isAccessible = true
+                    val v = f.get(app)
+                    if (v is ClassLoader) add(v)
+                }
+            }
+        }
         var last: ClassNotFoundException? = null
         for (cl in loaders) {
             try {
@@ -142,22 +189,10 @@ open class ContainerActivity : Activity() {
 
     private fun showError(pkg: String, t: Throwable) {
         val cause = generateSequence(t) { it.cause }.last()
-        val hardApp = pkg.startsWith("com.instagram.") ||
-            pkg.startsWith("com.facebook.") ||
-            pkg.startsWith("com.whatsapp")
-        val body = when {
-            cause is ClassNotFoundException && hardApp ->
-                "Couldn't start this copy of $pkg.\n\n" +
-                    "Instagram, Facebook, and similar apps hide their code and block clone apps. " +
-                    "Your original install is untouched.\n\n" +
-                    "Clone a game instead — Hill Climb Racing is the kind TwinSpace is built for."
-            cause is ClassNotFoundException ->
-                "Couldn't start this copy of $pkg.\n\n" +
-                    "The app's code didn't load in TwinSpace. Try removing it and adding it again, " +
-                    "or pick a simpler game."
-            else ->
-                "Couldn't start this copy of $pkg.\n\n${cause.javaClass.simpleName}: ${cause.message}"
-        }
+        val label = loaded?.label ?: pkg
+        val body = "Couldn't start this copy of $label.\n\n" +
+            "${cause.javaClass.simpleName}: ${cause.message}\n\n" +
+            "Your original app is untouched. Remove this clone and add it again after updating TwinSpace, or try another app."
         val text = TextView(this).apply {
             setTextColor(0xFFF4F4F5.toInt())
             textSize = 15f

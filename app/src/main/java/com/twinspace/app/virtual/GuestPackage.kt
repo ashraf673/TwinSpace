@@ -25,7 +25,9 @@ data class GuestPackage(
     val libDir: File,
     val dataRoot: File,
     val classLoader: ClassLoader,
-    val resources: Resources
+    val resources: Resources,
+    val packageContext: Context?,
+    val loadedApk: Any?
 )
 
 object GuestLoader {
@@ -67,12 +69,19 @@ object GuestLoader {
             sourceDir = realInfo.sourceDir ?: archiveBase.absolutePath
             publicSourceDir = realInfo.publicSourceDir ?: sourceDir
             splitSourceDirs = realInfo.splitSourceDirs
-            dataDir = dataRoot.absolutePath
-            nativeLibraryDir = realInfo.nativeLibraryDir?.takeIf { File(it).exists() }
-                ?: libDir.absolutePath
             processName = packageName
             uid = host.applicationInfo.uid
         }
+        ThreadBind.patchAppInfo(appInfo, dataRoot, realInfo.nativeLibraryDir?.takeIf { File(it).exists() } ?: libDir.absolutePath)
+
+        val pkgContext = runCatching {
+            host.createPackageContext(
+                packageName,
+                Context.CONTEXT_INCLUDE_CODE or Context.CONTEXT_IGNORE_SECURITY
+            )
+        }.getOrNull()
+        val loadedApk = pkgContext?.let { ThreadBind.loadedApkOf(it) }
+        ThreadBind.patchLoadedApk(loadedApk, dataRoot, appInfo)
 
         val activities = (installedPkg?.activities?.toList() ?: emptyList())
             .ifEmpty { archive?.activities?.toList() ?: emptyList() }
@@ -94,25 +103,21 @@ object GuestLoader {
         val loader = pickClassLoader(
             host = host,
             packageName = packageName,
+            applicationClass = appClassCandidate(installedPkg, archive, realInfo),
             launchClass = launchClass,
+            pkgContext = pkgContext,
             liveApks = liveApks,
             copiedApks = copiedApks,
             libPath = libPath,
             odexDir = File(root, "odex").apply { mkdirs() },
             parent = parent
         )
-        val resources = runCatching {
-            host.createPackageContext(
-                packageName,
-                Context.CONTEXT_IGNORE_SECURITY
-            ).resources
-        }.getOrNull() ?: resourcesFor(host, if (liveApks.isNotEmpty()) liveApks else copiedApks)
+        val resources = pkgContext?.resources
+            ?: resourcesFor(host, if (liveApks.isNotEmpty()) liveApks else copiedApks)
 
         val label = runCatching { pm.getApplicationLabel(realInfo).toString() }.getOrNull()
             .orEmpty().ifBlank { packageName }
-        val appClass = installedPkg?.applicationInfo?.className
-            ?: archive?.applicationInfo?.className
-            ?: realInfo.className
+        val appClass = appClassCandidate(installedPkg, archive, realInfo)
 
         return GuestPackage(
             packageName = packageName,
@@ -125,14 +130,28 @@ object GuestLoader {
             libDir = libDir,
             dataRoot = dataRoot,
             classLoader = loader,
-            resources = resources
+            resources = resources,
+            packageContext = pkgContext,
+            loadedApk = loadedApk
         )
+    }
+
+    private fun appClassCandidate(
+        installedPkg: android.content.pm.PackageInfo?,
+        archive: android.content.pm.PackageInfo?,
+        realInfo: ApplicationInfo
+    ): String? {
+        return installedPkg?.applicationInfo?.className
+            ?: archive?.applicationInfo?.className
+            ?: realInfo.className
     }
 
     private fun pickClassLoader(
         host: Context,
         packageName: String,
+        applicationClass: String?,
         launchClass: String,
+        pkgContext: Context?,
         liveApks: List<File>,
         copiedApks: List<File>,
         libPath: String,
@@ -140,13 +159,15 @@ object GuestLoader {
         parent: ClassLoader
     ): ClassLoader {
         val candidates = mutableListOf<ClassLoader>()
-
-        runCatching {
-            val pkgCtx = host.createPackageContext(
-                packageName,
-                Context.CONTEXT_INCLUDE_CODE or Context.CONTEXT_IGNORE_SECURITY
-            )
-            pkgCtx.classLoader?.let { candidates += it }
+        pkgContext?.classLoader?.let { candidates += it }
+        if (candidates.isEmpty()) {
+            runCatching {
+                val pkgCtx = host.createPackageContext(
+                    packageName,
+                    Context.CONTEXT_INCLUDE_CODE or Context.CONTEXT_IGNORE_SECURITY
+                )
+                pkgCtx.classLoader?.let { candidates += it }
+            }
         }
         if (liveApks.isNotEmpty()) {
             runCatching {
@@ -182,11 +203,16 @@ object GuestLoader {
             }
         }
 
-        val found = candidates.firstOrNull { cl ->
-            runCatching { cl.loadClass(launchClass); true }.getOrDefault(false)
+        val wanted = ArrayList<String>()
+        if (!applicationClass.isNullOrBlank()) wanted.add(applicationClass)
+        wanted.add(launchClass)
+        for (name in wanted) {
+            val found = candidates.firstOrNull { cl ->
+                runCatching { cl.loadClass(name); true }.getOrDefault(false)
+            }
+            if (found != null) return found
         }
-        return found
-            ?: candidates.firstOrNull()
+        return candidates.firstOrNull()
             ?: throw IllegalStateException("Could not load $packageName")
     }
 
