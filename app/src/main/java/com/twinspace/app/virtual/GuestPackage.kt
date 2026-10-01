@@ -195,17 +195,23 @@ object GuestLoader {
         libPath: String,
         parent: ClassLoader
     ): ClassLoader? {
-        val buffers = apkFiles.distinctBy { it.absolutePath }.flatMap { dexBuffers(it) }
-        if (buffers.isEmpty()) return null
-        return when {
-            Build.VERSION.SDK_INT >= 29 ->
-                InMemoryDexClassLoader(buffers.toTypedArray(), libPath, parent)
-            Build.VERSION.SDK_INT >= 27 ->
-                InMemoryDexClassLoader(buffers.toTypedArray(), parent)
-            else -> buffers.fold<ClassLoader>(parent) { acc, buf ->
-                InMemoryDexClassLoader(buf, acc)
-            }
+        val buffers = ArrayList<ByteBuffer>()
+        for (apk in apkFiles.distinctBy { it.absolutePath }) {
+            buffers.addAll(dexBuffers(apk))
         }
+        if (buffers.isEmpty()) return null
+        val array = buffers.toTypedArray()
+        if (Build.VERSION.SDK_INT >= 29) {
+            return InMemoryDexClassLoader(array, libPath, parent)
+        }
+        if (Build.VERSION.SDK_INT >= 27) {
+            return InMemoryDexClassLoader(array, parent)
+        }
+        var loader: ClassLoader = parent
+        for (i in buffers.indices) {
+            loader = InMemoryDexClassLoader(buffers[i], loader)
+        }
+        return loader
     }
 
     private fun dexBuffers(apk: File): List<ByteBuffer> {
