@@ -56,18 +56,39 @@ open class ContainerActivity : Activity() {
         isolated = isolatedCtx
         val instrumentation = IsolatedInstrumentation(this)
         instr = instrumentation
-        Thread.currentThread().contextClassLoader = loadedPkg.classLoader
+        ClassLoaders.pin(loadedPkg.classLoader)
+        ThreadBind.setClassLoader(loadedPkg.loadedApk, loadedPkg.classLoader)
 
-        var app = ThreadBind.makeApplication(loadedPkg.loadedApk, instrumentation)
+        var app = ThreadBind.makeApplication(loadedPkg.loadedApk)
+        // makeApplication installs a boot/warning class loader. Put the guest loader back
+        // before Application.onCreate, which is when apps unpack hidden dex.
+        val baseLoader = ClassLoaders.best(
+            listOf(ThreadBind.classLoaderOf(loadedPkg.loadedApk), loadedPkg.classLoader, loadedPkg.packageContext?.classLoader),
+            listOf(loadedPkg.applicationClass)
+        ) ?: loadedPkg.classLoader
+        ClassLoaders.pin(baseLoader)
+        ThreadBind.setClassLoader(loadedPkg.loadedApk, baseLoader)
         if (app == null) {
             app = instantiateApplication(loadedPkg)
             ActivityAttacher.attachApplication(app, isolatedCtx)
         }
         ThreadBind.registerApplication(app)
-        runCatching { app.onCreate() }
+        app.onCreate()
+        val live = ClassLoaders.best(
+            listOf(
+                Thread.currentThread().contextClassLoader,
+                ThreadBind.classLoaderOf(loadedPkg.loadedApk),
+                app.classLoader,
+                baseLoader,
+                loadedPkg.classLoader,
+                loadedPkg.packageContext?.classLoader
+            ),
+            listOf(loadedPkg.launcher.name, loadedPkg.applicationClass)
+        ) ?: baseLoader
+        isolatedCtx.guestLoader = live
+        ClassLoaders.pin(live)
+        ThreadBind.setClassLoader(loadedPkg.loadedApk, live)
         guestApp = app
-        isolatedCtx.guestLoader = harvestLoader(app, loadedPkg)
-        Thread.currentThread().contextClassLoader = isolatedCtx.guestLoader
 
         startGuest(loadedPkg.launcher.name, Intent(Intent.ACTION_MAIN).apply {
             addCategory(Intent.CATEGORY_LAUNCHER)
@@ -129,74 +150,45 @@ open class ContainerActivity : Activity() {
         return cls.getDeclaredConstructor().newInstance() as Application
     }
 
-    private fun harvestLoader(app: Application, loadedPkg: GuestPackage): ClassLoader {
-        val loaders = linkedSetOf<ClassLoader>()
-        fun add(cl: ClassLoader?) {
-            var c = cl
-            while (c != null && loaders.add(c)) {
-                c = c.parent
-            }
-        }
-        add(app.classLoader)
-        add(Thread.currentThread().contextClassLoader)
-        add(loadedPkg.classLoader)
-        add(loadedPkg.packageContext?.classLoader)
-        runCatching {
-            for (f in app.javaClass.declaredFields) {
-                f.isAccessible = true
-                val v = f.get(app)
-                if (v is ClassLoader) add(v)
-            }
-        }
-        return loaders.firstOrNull() ?: loadedPkg.classLoader
-    }
-
     private fun resolveClass(className: String): Class<*> {
+        val names = listOf(className)
+        val candidates = listOf(
+            Thread.currentThread().contextClassLoader,
+            isolated?.guestLoader,
+            guestApp?.classLoader,
+            ThreadBind.classLoaderOf(loaded?.loadedApk),
+            loaded?.classLoader,
+            loaded?.packageContext?.classLoader
+        )
+        val chosen = ClassLoaders.best(candidates, names)
         val loaders = linkedSetOf<ClassLoader>()
-        fun add(cl: ClassLoader?) {
-            var c = cl
-            while (c != null && loaders.add(c)) {
-                c = c.parent
-            }
+        if (chosen != null) loaders.add(chosen)
+        for (cl in candidates) {
+            if (cl != null && !ClassLoaders.isBoot(cl)) loaders.add(cl)
         }
-        add(Thread.currentThread().contextClassLoader)
-        add(guestApp?.classLoader)
-        add(isolated?.guestLoader)
-        add(loaded?.classLoader)
-        add(loaded?.packageContext?.classLoader)
-        runCatching {
-            val app = guestApp
-            if (app != null) {
-                for (f in app.javaClass.declaredFields) {
-                    f.isAccessible = true
-                    val v = f.get(app)
-                    if (v is ClassLoader) add(v)
-                }
-            }
-        }
-        var last: ClassNotFoundException? = null
+        var last: Throwable? = null
         for (cl in loaders) {
             try {
-                return Class.forName(className, true, cl)
+                return Class.forName(className, false, cl)
             } catch (e: ClassNotFoundException) {
                 last = e
             } catch (e: NoClassDefFoundError) {
-                last = ClassNotFoundException(className, e)
+                last = e
             }
         }
-        throw last ?: ClassNotFoundException(className)
+        val detail = last?.message ?: "not in the cloned app class loader"
+        throw ClassNotFoundException("$className ($detail)")
     }
 
     private fun showError(pkg: String, t: Throwable) {
-        val cause = generateSequence(t) { it.cause }.last()
         val label = loaded?.label ?: pkg
         val body = "Couldn't start this copy of $label.\n\n" +
-            "${cause.javaClass.simpleName}: ${cause.message}\n\n" +
-            "Your original app is untouched. Remove this clone and add it again after updating TwinSpace, or try another app."
+            describe(t) +
+            "\n\nYour original app is untouched."
         val text = TextView(this).apply {
             setTextColor(0xFFF4F4F5.toInt())
-            textSize = 15f
-            setPadding(48, 96, 48, 48)
+            textSize = 13f
+            setPadding(48, 72, 48, 48)
             this.text = body
         }
         val root = FrameLayout(this).apply {
@@ -204,6 +196,23 @@ open class ContainerActivity : Activity() {
             addView(text)
         }
         setContentView(root)
+    }
+
+    private fun describe(t: Throwable): String {
+        val lines = ArrayList<String>()
+        var current: Throwable? = t
+        var depth = 0
+        while (current != null && depth < 4) {
+            lines.add(current.toString())
+            val trace = current.stackTrace
+            val shown = if (trace.size > 6) 6 else trace.size
+            for (i in 0 until shown) {
+                lines.add("  at ${trace[i]}")
+            }
+            current = current.cause
+            depth++
+        }
+        return lines.joinToString("\n")
     }
 
     override fun onStart() {

@@ -33,4 +33,4 @@ Some apps still refuse clones (Play Integrity / anti-cheat). TwinSpace is built 
 2. Run workflow **TwinSpace - Stage 1 Android APK**.
 3. Download the debug APK from artifacts.
 
-Package: `com.twinspace.app` · minSdk 26 · targetSdk 35 · version 3.1.1
+Package: `com.twinspace.app` · minSdk 26 · targetSdk 35 · version 3.1.2

@@ -1,7 +1,6 @@
 package com.twinspace.app.virtual
 
 import android.app.Application
-import android.app.Instrumentation
 import android.content.pm.ApplicationInfo
 import java.io.File
 
@@ -46,25 +45,41 @@ object ThreadBind {
         return ActivityAttacher.readField(c, "mPackageInfo")
     }
 
-    fun makeApplication(loadedApk: Any?, instrumentation: Instrumentation): Application? {
+    fun classLoaderOf(loadedApk: Any?): ClassLoader? {
         if (loadedApk == null) return null
+        val existing = ActivityAttacher.readField(loadedApk, "mClassLoader") as? ClassLoader
+        if (existing != null && !ClassLoaders.isBoot(existing)) return existing
         return try {
-            val methods = loadedApk.javaClass.methods
-            val make = methods.firstOrNull { m ->
-                m.name == "makeApplication" && m.parameterTypes.size >= 2
-            } ?: return null
-            make.isAccessible = true
-            val args = Array<Any?>(make.parameterTypes.size) { i ->
-                val t = make.parameterTypes[i]
-                when {
-                    t == Boolean::class.javaPrimitiveType || t == java.lang.Boolean::class.java -> false
-                    Instrumentation::class.java.isAssignableFrom(t) -> instrumentation
-                    else -> null
-                }
-            }
-            make.invoke(loadedApk, *args) as? Application
+            val m = loadedApk.javaClass.getMethod("getClassLoader")
+            m.invoke(loadedApk) as? ClassLoader
         } catch (_: Throwable) {
             null
+        }
+    }
+
+    fun setClassLoader(loadedApk: Any?, loader: ClassLoader?) {
+        if (loadedApk == null || loader == null || ClassLoaders.isBoot(loader)) return
+        ActivityAttacher.writeField(loadedApk, "mClassLoader", loader)
+    }
+
+    fun makeApplication(loadedApk: Any?): Application? {
+        if (loadedApk == null) return null
+        val methods = loadedApk.javaClass.methods
+        val make = methods.firstOrNull { m ->
+            m.name == "makeApplication" && m.parameterTypes.size >= 2
+        } ?: return null
+        make.isAccessible = true
+        val args = Array<Any?>(make.parameterTypes.size) { i ->
+            val t = make.parameterTypes[i]
+            when {
+                t == Boolean::class.javaPrimitiveType || t == java.lang.Boolean::class.java -> false
+                else -> null
+            }
+        }
+        try {
+            return make.invoke(loadedApk, *args) as? Application
+        } catch (e: java.lang.reflect.InvocationTargetException) {
+            throw e.cause ?: e
         }
     }
 
