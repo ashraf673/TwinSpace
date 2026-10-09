@@ -156,7 +156,7 @@ class IsolatedContext(
     private fun redirect(intent: Intent) {
         val target = intent.component?.packageName ?: intent.`package`
         if (target == guestPackage) {
-            val hostActivity = owner ?: host as? ContainerActivity
+            val hostActivity = (owner as? ContainerActivity) ?: (host as? ContainerActivity)
             if (hostActivity != null) {
                 hostActivity.consumeStart(intent)
                 return

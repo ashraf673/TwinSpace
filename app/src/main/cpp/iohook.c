@@ -91,8 +91,10 @@ static int hook_fstatat(int dirfd, const char *pathname, void *statbuf, int flag
 }
 
 static void *find_sym(const char *name) {
-    void *h = dlopen("libc.so", RTLD_NOW);
-    if (h == NULL) h = dlopen("libc.so", RTLD_DEFAULT);
+    void *p = dlsym(RTLD_DEFAULT, name);
+    void *h;
+    if (p != NULL) return p;
+    h = dlopen("libc.so", RTLD_NOW);
     if (h == NULL) return NULL;
     return dlsym(h, name);
 }
